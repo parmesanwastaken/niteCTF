@@ -91,3 +91,186 @@ password: ' UNION SELECT '1', '2', '3' FROM users WHERE ''='
 - Thus I found the management kiwi who had password in her notes: `ecSKsN7SES`
 - Then I accessed the admin panel and similarly to older database challenge, we had to find actual name of redacted and thus I decided to find it using `' UNION SELECT 1, sql, 3, 4 FROM sqlite_master /*`
 - Then I finally got the flag using `' UNION SELECT 1, secrets, 3, 4 FROM CITADEL_ARCHIVE_2077 /*`
+
+  ---
+
+  # Web3
+
+## 
+- Description talked about contract so I went to contract and there was a decompile button which kinda tried to find the source code
+- I pressed it and got (It was cleaner and readable on site but didn't allow me to copy so I copied from dev tools which broke the format):
+```
+://<![CDATA[var strR = '# Palkeoramix decompiler. \n\ndef storage:\n  unknownc91d4ca6 is array of uint256 at storage 0\n  owner is addr at storage 1\n\ndef owner() payable: \n  return owner\n\ndef unknownc91d4ca6(uint256 _param1) payable: \n  require calldata.size - 4 >=ΓÇ▓ 32\n  require _param1 == _param1\n  require _param1 < unknownc91d4ca6.length\n  return unknownc91d4ca6[_param1]\n\n#\n#  Regular functions\n#\n\ndef _fallback() payable: # default function\n  revert\n\ndef unknownb8da5144() payable: \n  require calldata.size - 4 >=ΓÇ▓ 32\n  require cd <= 18446744073709551615\n  require cd <ΓÇ▓ calldata.size\n  if (\'cd\', 4).length > 18446744073709551615:\n      revert with \'NH{q\', 65\n  if (32 * (\'cd\', 4).length) + 128 > 18446744073709551615 or (32 * (\'cd\', 4).length) + 128 < 96:\n      revert with \'NH{q\', 65\n  mem[64] = (32 * (\'cd\', 4).length) + 128\n  mem[96] = (\'cd\', 4).length\n  require cd * (\'cd\', 4).length) + 36 <= calldata.size\n  idx = 0\n  s = cd[4] + 36\n  t = 128\n  while idx < (\'cd\', 4).length:\n      require cd[s] == cd[s]\n      mem[t] = cd[s]\n      idx = idx + 1\n      s = s + 32\n      t = t + 32\n      continue \n  if (\'cd\', 4).length != unknownc91d4ca6.length:\n      revert with 0, \'Wrong number of chunks\'\n  idx = 0\n  while idx < (\'cd\', 4).length:\n      if idx >= mem[96]:\n          revert with \'NH{q\', 50\n      mem[mem[64] + 32] = mem[(32 * idx) + 128]\n      mem[mem[64] + 64] = owner\n      _38 = mem[64]\n      mem[mem[64]] = 52\n      mem[64] = mem[64] + 84\n      _40 = sha3(mem[_38 + 32 len mem[_38]])\n      if idx >= unknownc91d4ca6.length:\n          revert with \'NH{q\', 50\n      mem[0] = 0\n      if _40 != unknownc91d4ca6[idx]:\n          revert with 0, \'Invalid Chunk\'\n      if idx == -1:\n          revert with \'NH{q\', 17\n      idx = idx + 1\n      continue \n  return 1\n\n\n'; window.onload = function() { decompile_pan(strR); };//]]
+```
+- This gave me basic idea of how it worked
+- Also I checked input data of transactions and all execpt 3 were useless
+- Also we required owner address to decode this
+- The contract stores 8 hashes and ownner address is the salt
+- So I copied all the required strings and solved it using a python script:
+```py
+from eth_hash.auto import keccak
+import itertools
+import string
+import sys
+
+owner = bytes.fromhex("1597126b98a9560ca91ad4b926d0def7e2c45603")
+
+hashes = [
+    "f59964cd0c25442208c8d0135bf938cf10dee456234ac55bccafac25e7f16234",
+    "a12f9f56c9d0067235de6a2fd821977bacc4d5ed6a9d9f7e38d643143f855688",
+    "3486d083d2655b16f836dcf07114c4a738727c9481b620cdf2db59cd5acfe372",
+    "2dfb14ffa4d2fe750d6e28014c3013793b22e122190a335a308f0d330143da3d",
+    "d62d22652789151588d2d49bcd0d20a41e2ba09f319f6cf84bc712ea45a215ef",
+    "6cf18571f33a226462303a6ae09be5de3c725b724bf623b5691dcb60651ee136",
+    "2b86ca86c8cfc8aa383afc78aa91ab265b174071d300c720e178264d2f647a42",
+    "e9d5b7877c45245ca46dc5975dc6b577baa951b05f59a8e7b87468bfad4a956d" 
+
+charset = string.ascii_letters + string.digits + string.punctuation
+
+flag = ""
+print(f"[-] Cracking... (Charset size: {len(charset)})")
+
+for i, h in enumerate(hashes):
+    target = bytes.fromhex(h)
+    found = False
+    
+    for c in itertools.product(charset, repeat=4):
+        word_str = "".join(c)
+        word_bytes = word_str.encode()
+        
+        chunk = word_bytes + b"\x00" * (32 - len(word_bytes))
+
+        if keccak(chunk + owner) == target:
+            print(f"[+] Chunk {i+1} Found: {word_str}")
+            flag += word_str
+            found = True
+            break
+    
+    if not found:
+        print(f"Couldn't Crack")
+        sys.exit()
+
+print(f"\n[***] FINAL FLAG: {flag}")
+```
+- This cracked it with 94 character set
+- Thus I got the flag
+
+## Money Trail
+- The description made it clear we had to go through all transactions and check input data/log for strings
+- So I used python script to automate this:
+
+```py
+import requests
+import time
+import string
+from web3 import Web3
+from hexbytes import HexBytes
+
+# --- CONFIGURATION ---
+RPC_URL = "https://testnet.evm.nodes.onflow.org"
+EXPLORER_API = "https://evm-testnet.flowscan.io/api"
+START_TX = "0x58830b21870ebc891d15e469e01f6de78334f1af8c0905fafc63fbd34e726b18"
+
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+visited_txs = set()
+
+PRINTABLE = set(string.printable) - set(string.whitespace) | {' '}
+
+def try_decode(hex_data):
+    """Aggressively tries to find any ASCII char in hex data."""
+    found_strings = []
+    if not hex_data or hex_data == HexBytes('0x'):
+        return None
+    
+    try:
+
+        raw_bytes = bytes.fromhex(hex_data.hex()[2:])
+        clean_str = raw_bytes.replace(b'\x00', b'').decode('utf-8', errors='ignore')
+        
+
+        filtered_str = "".join([c for c in clean_str if c in PRINTABLE])
+        
+        if len(filtered_str) > 0:
+            return filtered_str
+    except:
+        pass
+    return None
+
+def analyze_tx(tx_hash):
+    results = []
+    
+    try:
+        tx = w3.eth.get_transaction(tx_hash)
+        input_msg = try_decode(tx['input'])
+        if input_msg:
+            results.append(f"IN: [{input_msg}]")
+
+
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        for log in receipt['logs']:
+            # Check Data
+            log_msg = try_decode(log['data'])
+            if log_msg:
+                results.append(f"LOG: [{log_msg}]")
+            
+            # Check Topics (Indexed params often hold chars)
+            for topic in log['topics']:
+                topic_msg = try_decode(topic)
+                if topic_msg:
+                    results.append(f"TOPIC: [{topic_msg}]")
+                    
+    except Exception as e:
+        pass
+        
+    return " | ".join(results)
+
+def get_outgoing(address, start_block):
+    """Get all outgoing transactions after the money was received."""
+    try:
+        params = {'module': 'account', 'action': 'txlist', 'address': address, 'sort': 'asc'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(EXPLORER_API, params=params, headers=headers, timeout=5).json()
+        
+        valid = []
+        if r['status'] == '1' and r['result']:
+            for tx in r['result']:
+                if tx['from'].lower() == address.lower() and int(tx['blockNumber']) > start_block:
+                    valid.append(tx)
+        return valid
+    except:
+        return []
+
+def trace(tx_hash, depth=0):
+    indent = "  " * depth
+    if tx_hash in visited_txs: return
+    visited_txs.add(tx_hash)
+
+    try:
+        tx = w3.eth.get_transaction(tx_hash)
+        receiver = tx['to']
+        block = tx['blockNumber']
+    except:
+        return
+
+    hidden_data = analyze_tx(tx_hash)
+    
+
+    if hidden_data:
+        print(f"{indent}> {tx_hash[-4:]} \033[92m{hidden_data}\033[0m")
+    else:
+        print(f"{indent}> {tx_hash[-4:]}")
+
+    if not receiver: return
+
+    outgoing = get_outgoing(receiver, block)
+    for out_tx in outgoing:
+        time.sleep(0.1) # Rate limit
+        trace(out_tx['hash'], depth + 1)
+
+print("[*] Starting Unfiltered Deep Scan...")
+print("[*] Looking for fragments like '{', '}', '_', '1'...")
+trace(START_TX)
+```
+- After running it for few minutes, it went through all the branches and showed me the output in UTF-8 format
+<img width="865" height="492" alt="WindowsTerminal_DfeFxijuQ6" src="https://github.com/user-attachments/assets/82a71718-94bd-4962-baa0-056b40ce5eb8" />
+
