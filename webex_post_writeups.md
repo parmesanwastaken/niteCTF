@@ -160,3 +160,4 @@ if __name__ == '__main__':
 ```
 - `/proc/self/status` contains `pid`, `uid` and `gid`, the file name of flag is generated from PRNG with seed values containing formarlly mentioned values
 
+---
